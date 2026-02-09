@@ -1,89 +1,80 @@
+
 from flask import Flask, request, render_template_string
 from PIL import Image
-import exifread
-import os
-import requests
+import exifread, os, requests, base64
+from openai import OpenAI
 
-app = Flask(__name__)
+app = Flask,(__name__)
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Image Metadata Analyzer</title>
+<title>Smart Image Analyzer</title>
 </head>
 <body>
-    <h2>Upload an Image to Analyze Metadata</h2>
-    <form method="post" enctype="multipart/form-data">
-        <input type="file" name="image" required>
-        <button type="submit">Analyze</button>
-    </form>
+<h2>Upload Image</h2>
+<form method="post" enctype="multipart/form-data">
+<input type="file" name="image" required>
+<button type="submit">Analyze</button>
+</form>
 
-    {% if result %}
-    <h3>Metadata Summary:</h3>
-    <pre>{{ result }}</pre>
-    {% endif %}
+{% if summary %}
+<h3>AI Summary:</h3>
+<p>{{ summary }}</p>
+
+<h3>Metadata:</h3>
+<pre>{{ metadata }}</pre>
+{% endif %}
 </body>
 </html>
 """
 
-def get_location(lat, lon):
-    try:
-        url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}"
-        headers = {"User-Agent": "MetadataApp"}
-        r = requests.get(url, headers=headers, timeout=10)
-        data = r.json()
-        return data.get("display_name", "Location not found")
-    except:
-        return "Location lookup failed"
+def analyze_image_with_ai(image_path):
+    with open(image_path, "rb") as img:
+        base64_image = base64.b64encode(img.read()).decode("utf-8")
 
-@app.route("/", methods=["GET", "POST"])
+    response = client.chat.completions.create(
+        model="gpt-4.1",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe what is happening in this image in one clear sentence."},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+                    },
+                ],
+            }
+        ],
+    )
+    return response.choices[0].message.content
+
+@app.route("/", methods=["GET","POST"])
 def upload():
-    result = None
+    summary = None
+    metadata = None
 
     if request.method == "POST":
         file = request.files["image"]
         path = "temp.jpg"
         file.save(path)
 
-        img = Image.open(path)
-        size = os.path.getsize(path)
-
         with open(path, "rb") as f:
             tags = exifread.process_file(f)
 
-        meta = []
-        gps_lat = gps_lon = None
+        meta_list = [f"{tag}: {tags[tag]}" for tag in tags]
 
-        for tag in tags:
-            if "GPSLatitude" in tag:
-                gps_lat = tags[tag]
-            if "GPSLongitude" in tag:
-                gps_lon = tags[tag]
-            meta.append(f"{tag}: {tags[tag]}")
+        # AI Image description
+        summary = analyze_image_with_ai(path)
 
-        location = "Not available"
-        if gps_lat and gps_lon:
-            lat = str(gps_lat)
-            lon = str(gps_lon)
-            location = get_location(lat, lon)
-
-        result = f"""
-File Name: {file.filename}
-File Size: {size/1024:.2f} KB
-Dimensions: {img.size[0]} x {img.size[1]}
-
-Detected Metadata:
-------------------
-{chr(10).join(meta)}
-
-Estimated Location:
-{location}
-"""
+        metadata = "\n".join(meta_list)
 
         os.remove(path)
 
-    return render_template_string(HTML, result=result)
+    return render_template_string(HTML, summary=summary, metadata=metadata)
 
 if __name__ == "__main__":
     app.run(debug=True)
