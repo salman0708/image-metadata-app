@@ -2,4 +2,5 @@ flask
 pillow
 exifread
 requests
+openai
 gunicorn
