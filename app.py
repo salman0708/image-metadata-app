@@ -1,28 +1,31 @@
 
+import os, base64, exifread
 from flask import Flask, request, render_template_string
 from PIL import Image
-import exifread, os, requests, base64
 from openai import OpenAI
 
-app = Flask,(__name__)
+app = Flask(__name__)
+
+# Read API key from environment variable
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-<title>Smart Image Analyzer</title>
+<title>AI Image Summary</title>
 </head>
 <body>
 <h2>Upload Image</h2>
+
 <form method="post" enctype="multipart/form-data">
 <input type="file" name="image" required>
 <button type="submit">Analyze</button>
 </form>
 
 {% if summary %}
-<h3>AI Summary:</h3>
-<p>{{ summary }}</p>
+<h3>AI Image Summary:</h3>
+<p><b>{{ summary }}</b></p>
 
 <h3>Metadata:</h3>
 <pre>{{ metadata }}</pre>
@@ -31,26 +34,29 @@ HTML = """
 </html>
 """
 
-def analyze_image_with_ai(image_path):
-    with open(image_path, "rb") as img:
-        base64_image = base64.b64encode(img.read()).decode("utf-8")
+def get_image_summary(image_path):
+    with open(image_path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
 
-    response = client.chat.completions.create(
-        model="gpt-4.1",
-        messages=[
+    response = client.responses.create(
+        model="gpt-4.1-mini",
+        input=[
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Describe what is happening in this image in one clear sentence."},
+                    {"type": "input_text",
+                     "text": "Describe what is happening in this image in one clear sentence."},
                     {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+                        "type": "input_image",
+                        "image_base64": b64,
                     },
                 ],
             }
         ],
+        max_output_tokens=150,
     )
-    return response.choices[0].message.content
+
+    return response.output_text
 
 @app.route("/", methods=["GET","POST"])
 def upload():
@@ -62,15 +68,15 @@ def upload():
         path = "temp.jpg"
         file.save(path)
 
+        # ---- Read metadata ----
         with open(path, "rb") as f:
             tags = exifread.process_file(f)
 
         meta_list = [f"{tag}: {tags[tag]}" for tag in tags]
-
-        # AI Image description
-        summary = analyze_image_with_ai(path)
-
         metadata = "\n".join(meta_list)
+
+        # ---- Get AI summary ----
+        summary = get_image_summary(path)
 
         os.remove(path)
 
